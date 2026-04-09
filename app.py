@@ -44,9 +44,13 @@ def predict():
 
             value = data[col]
 
-            # Encode using saved encoder
-            encoded = encoders[col].transform([value])[0]
-            input_data.append(encoded)
+            # Age is numeric, not label-encoded
+            if col == "Age":
+                input_data.append(int(value))
+            else:
+                # Encode using saved encoder
+                encoded = encoders[col].transform([value])[0]
+                input_data.append(encoded)
 
         print("Encoded input:", input_data)
 
