@@ -5,28 +5,29 @@ from flask_cors import CORS
 import os
 
 app = Flask(__name__)
-CORS(app)  # ✅ allow frontend connection
+CORS(app)
 
 # Load model and encoders
 model = pickle.load(open("model.pkl", "rb"))
 encoders = pickle.load(open("encoders.pkl", "rb"))
 
-# ✅ IMPORTANT: correct feature order (MUST MATCH TRAINING)
-FEATURE_ORDER = [
-    "Fever",
-    "Cough",
-    "Fatigue",
-    "Difficulty Breathing",
-    "Age",
-    "Gender",
-    "Blood Pressure",
-    "Cholesterol Level"
-]
-
-# ✅ Home route (no more "Not Found")
+# ✅ Home route
 @app.route("/")
 def home():
     return "✅ Disease Prediction API is running"
+
+# ✅ Debug route — shows encoder keys and model expected features
+@app.route("/debug")
+def debug():
+    encoder_keys = list(encoders.keys())
+    try:
+        n_features = model.n_features_in_
+    except:
+        n_features = "unknown"
+    return jsonify({
+        "encoder_keys": encoder_keys,
+        "model_expected_features": n_features
+    })
 
 # ✅ Prediction route
 @app.route("/predict", methods=["POST"])
@@ -35,24 +36,30 @@ def predict():
         data = request.json
         print("Received data:", data)
 
+        # Get the feature columns from encoders (excluding Disease which is the target)
+        feature_cols = [k for k in encoders if k != "Disease"]
+        
         input_data = []
 
-        # ✅ FIX: enforce correct order
-        for col in FEATURE_ORDER:
-            if col not in data:
-                return jsonify({"error": f"Missing field: {col}"}), 400
+        for col in feature_cols:
+            value = data.get(col)
+            if value is None:
+                return jsonify({"error": f"Missing field: {col}", "expected_fields": feature_cols}), 400
 
-            value = data[col]
+            encoded = encoders[col].transform([value])[0]
+            input_data.append(encoded)
 
-            # Age is numeric, not label-encoded
-            if col == "Age":
-                input_data.append(int(value))
-            else:
-                # Encode using saved encoder
-                encoded = encoders[col].transform([value])[0]
-                input_data.append(encoded)
+        print("Encoded input:", input_data, "length:", len(input_data))
 
-        print("Encoded input:", input_data)
+        # If model expects more features than we have encoders for,
+        # check if Age is a numeric column that wasn't label-encoded
+        n_expected = getattr(model, 'n_features_in_', len(input_data))
+        if n_expected > len(input_data):
+            # Try inserting Age as numeric at position after "Difficulty Breathing" (index 4)
+            age_val = int(data.get("Age", 25))
+            insert_pos = min(4, len(input_data))
+            input_data.insert(insert_pos, age_val)
+            print("Added Age at position", insert_pos, "=> new length:", len(input_data))
 
         # Predict
         prediction = model.predict([input_data])
@@ -66,13 +73,14 @@ def predict():
         })
 
     except Exception as e:
-        print("Error:", str(e))
+        import traceback
+        traceback.print_exc()
         return jsonify({
             "error": str(e),
             "status": "failed"
         }), 500
 
 
-# ✅ FIX for Render deployment
+# ✅ Render deployment
 port = int(os.environ.get("PORT", 10000))
-app.run(host="0.0.0.0", port=port)
+app.run(host="0.0.0.0", port=port)
